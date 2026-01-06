@@ -1,0 +1,2141 @@
+<?xml version="1.0" encoding="utf-8" ?>
+
+<PowershellConnectorDefinition Id="SuccessFactorsConnector" Version="1.0" Description="SuccessFactors Connector">
+
+	<PluginAssemblies>
+		<!--<Assembly Path="VI.Projector.Exchange.Common.dll" />-->
+	</PluginAssemblies>
+
+	<ConnectionParameters>
+		<ConnectionParameter Name="BaseUrl" Description="Base uri for SuccessFactors API" />	
+        <ConnectionParameter Name="AuthUrl" Description="Auth uri for SuccessFactors API" />	
+        <ConnectionParameter Name="TokenUrl" Description="Token uri for SuccessFactors API" />
+		<ConnectionParameter Name="ClientId" Description="Client Id" />
+        <ConnectionParameter Name="ClientSecret" Description="Client Secret" IsSensibleData="true" />
+        <ConnectionParameter Name="UserId" Description="User ID" />
+        <ConnectionParameter Name="CompanyId" Description="Company Id" />
+        <ConnectionParameter Name="GrantType" Description="GrantType" />
+        
+	</ConnectionParameters>
+
+	<Initialization>
+		<CustomCommands>
+            <CustomCommand Name="Get-SFAssertion">
+                <![CDATA[
+                    param(
+                        [string]$BaseUrl,
+                        [string]$User_id,
+                        [string]$client_id,
+                        [string]$token_url,
+                        [string]$private_key
+                    )
+
+                    $uri = "$BaseUrl/oauth/idp"
+
+                    $assertionHeader = @{
+                        "Content-Type" = "application/x-www-form-urlencoded"
+                    }
+                    
+                    $body = @{
+                        user_id         = $User_id
+                        client_id       = $client_id
+                        token_url       = $token_url
+                        private_key     = $private_key
+
+                    }
+
+                    return Invoke-RestMethod -Method Post -Uri $uri -Headers $assertionHeader -Body $body
+                ]]>
+            </CustomCommand>
+            <CustomCommand Name="Get-SFToken">
+                <![CDATA[
+                    param(
+                        [string]$BaseUrl,
+                        [String]$client_id,
+                        [String]$company_id,
+                        [String]$grant_type,
+                        [String]$assertion
+                        # Planned support for new_token
+                        #[bool]$new_token
+                    )
+
+                    $uri = "$BaseUrl/oauth/token"
+
+                    $tokenHeader = @{
+                        "Content-Type" = "application/x-www-form-urlencoded"
+                    }
+                    
+                    $body = @{
+                        client_id         = $client_id
+                        company_id        = $company_id
+                        grant_type        = $grant_type
+                        assertion         = $assertion
+                        #new_token         = $new_token
+                    }
+
+                    return Invoke-RestMethod -Method Post -Uri $uri -Headers $tokenHeader -Body $body
+                ]]>
+            </CustomCommand>
+            <CustomCommand Name="Get-SFHeaders">
+                <![CDATA[
+                    param(
+                        
+                    )
+
+                    $headers = @{ 
+                        "Authorization" = "Bearer $($global:_token.access_token)" 
+                        "Content-Type" = "application/json;charset=utf-8"
+                        "Accept"       = "application/json;charset=utf-8"
+                    }
+
+                    return $headers
+                ]]>
+            </CustomCommand>
+			<CustomCommand Name="Connect-SF">
+				<![CDATA[
+                    Param(
+                        [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+                        [ValidateNotNullOrEmpty()]
+                        [string]$BaseUrl,
+                        [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+                        [ValidateNotNullOrEmpty()]
+                        [string]$AuthUrl,
+                        [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+                        [ValidateNotNullOrEmpty()]
+                        [string]$TokenUrl,
+                        [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+                        [ValidateNotNullOrEmpty()]
+                        [string]$ClientId,
+                        [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+                        [ValidateNotNullOrEmpty()]
+                        [string]$ClientSecret,
+                        [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+                        [ValidateNotNullOrEmpty()]
+                        [string]$UserId,
+                        [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+                        [ValidateNotNullOrEmpty()]
+                        [string]$CompanyId,
+                        [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+                        [ValidateNotNullOrEmpty()]
+                        [string]$GrantType
+                    )
+                    
+                    try {
+                        $assertion      = Get-SFAssertion   -BaseUrl $AuthUrl -client_id $ClientId -token_url   $TokenUrl   -private_key    $ClientSecret -User_id    $UserId
+                        $token          = Get-SFToken       -BaseUrl $AuthUrl -client_id $ClientId -grant_type  $GrantType  -company_id     $CompanyId  -assertion  $assertion
+                        
+                        $global:_token  = $token
+                        $global:_url = $BaseUrl
+                    }
+                    catch {
+                        throw
+                    }
+			    ]]>
+			</CustomCommand>
+            <CustomCommand Name="Close-SF">
+				<![CDATA[
+                    Param(
+                        
+                    )
+                    
+                    try {
+                        $global:_token  = $null
+                        $global:_url = $null
+                    }
+                    catch {
+                        throw
+                    }
+			    ]]>
+			</CustomCommand>
+            <CustomCommand Name="Invoke-SFRestMethod">
+                <![CDATA[
+                    param(
+                        [string]$BaseUrl,
+                        [string]$EndPoint,
+                        [string]$Append
+                    )
+            
+                    $headers        = Get-SFHeaders
+					$jsonHeaders	= $headers | ConvertTo-Json
+                    $uri            = $BaseUrl + '/' + $EndPoint + $Append
+					try
+				    {
+				
+				
+    					$result         = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+    					$rows = $result.d.results
+					    While($result.d.__Next){
+        					$result     = Invoke-RestMethod -Method Get -Uri $result.d.__Next -Headers $headers
+        					$rows       += $result.d.Results
+    					}
+    					return $rows
+				
+                    	#$result = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+                    	#return $result
+					}
+					catch {
+						Throw #"$($uri) - $($jsonHeaders)"
+					}
+				
+                ]]>
+            </CustomCommand>
+			<CustomCommand Name="Invoke-SFRestMethodSingle">
+                <![CDATA[
+                    param(
+                        [string]$BaseUrl,
+                        [string]$EndPoint,
+                        [string]$Append
+                    )
+            
+                    $headers        = Get-SFHeaders
+					$jsonHeaders	= $headers | ConvertTo-Json
+                    $uri            = $BaseUrl + '/' + $EndPoint + $Append
+					try
+				    {
+    					$result         = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers    					
+                    	return $result.d
+					}
+					catch {
+						Throw #"$($uri) - $($jsonHeaders)"
+					}
+				
+                ]]>
+            </CustomCommand>
+			<CustomCommand Name="Get-SFUsers">
+				<![CDATA[
+                    param()
+                    # $Append = '?expand=personKeyNav,hr,manager,empInfo,nominationNav,empInfo/empJobRelationshipNav,empInfo/jobInfoNav,empInfo/personNav,empInfo/personNav/personalInfoNav,usersSysIdOfHireDateChangeNav,rehireUserOfONB2ProcessTriggerNav'
+                    $Append = '?$expand=manager,empInfo,empInfo/jobInfoNav'
+					$userResult = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/User" -Append $Append
+					$global:_sfusers = $userResult
+					return $userResult
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFUser">
+				<![CDATA[
+					param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$userId
+					)
+					#$filter = "userId eq '$userId'"
+					#$Append = '?$filter=' + $filter + '&$expand=manager,empInfo,empInfo/jobInfoNav'
+                    #$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/User" -Append $Append
+					#$user = $result[0]
+					#return $user
+					$sfuser = $global:_sfusers | Where-Object -Property "userId" -eq $userId
+					return $sfuser
+					
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFutureUsers">
+				<![CDATA[
+				
+                    param()
+                    $today = Get-Date
+					[string]$fromDate = $today.AddDays(1).ToString("yyyy-MM-dd")
+					[string]$startDate = $today.ToString("yyyy-MM-dd")
+					[string]$toDate   = $today.AddDays(91).ToString("yyyy-MM-dd")
+                    $Append = '?fromDate=' + $fromDate + '&toDate=' + $toDate + '&$filter=startDate gt datetime''' + $startDate + 'T23:59:59Z'''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpEmployment" -Append $Append
+					# throw "$($result.count)"
+					$futureusers = @()
+					foreach( $empl in $result) { 
+						try {
+							$userId = "('$($empl.UserId)')"
+							$AppendUser = $userId + '?$expand=manager,empInfo,empInfo/jobInfoNav'
+							$userResult = Invoke-SFRestMethodSingle -BaseUrl $global:_url -EndPoint "odata/v2/User" -Append $AppendUser
+							$futureusers += $userResult
+						}
+						catch {
+							if($_.Exception.StatusCode -eq "NotFound") {
+								# Skip
+							}
+							else {
+								Throw
+							}
+						}
+					} 
+					$global:_sfFutureUsers = $futureusers
+					return $futureusers
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFutureUser">
+				<![CDATA[
+					param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$userId
+					)
+				
+					$userId = "('$($userId)')"
+					$AppendUser = $userId + '?$expand=manager,empInfo,empInfo/jobInfoNav'
+					$userResult = Invoke-SFRestMethodSingle -BaseUrl $global:_url -EndPoint "odata/v2/User" -Append $AppendUser
+					return $userResult
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFDepartments">
+				<![CDATA[
+                    param()
+                    $Append = '?$expand=parentNav,headOfUnitNav'
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FODepartment" -Append $Append
+					$global:_departments = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFDepartment">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$externalCode
+					)
+					#$filter = "externalCode eq '$externalCode'"
+                    #$Append = '?$filter=' + $filter + '&$expand=parentNav,headOfUnitNav'
+                    #$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FODepartment" -Append $Append				
+					#return $result[0]
+					$department = $global:_departments | Where-Object -Property "externalCode" -eq $externalCode
+					return $department
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFPerPersonals">
+				<![CDATA[
+                    param()
+                    $Append = ''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/PerPersonal" -Append $Append
+					$global:_departments = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFPerPersonal">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$personIdExternal
+					)
+					#$filter = "personIdExternal eq '$personIdExternal'"
+                    #$Append = '?$filter=' + $filter
+                    #$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/PerPersonal" -Append $Append				
+					#return $result[0]
+					$department = $global:_departments | Where-Object -Property "externalCode" -eq $externalCode
+					return $department
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFuturePerPersonals">
+				<![CDATA[
+                    param()
+					$today = Get-Date
+					[string]$fromDate = $today.AddDays(1).ToString("yyyy-MM-dd")
+					[string]$startDate = $today.ToString("yyyy-MM-dd")
+					[string]$toDate   = $today.AddDays(31).ToString("yyyy-MM-dd")
+                    $Append = '?fromDate=' + $fromDate + '&toDate=' + $toDate + '&$filter=startDate gt datetime''' + $startDate + 'T23:59:59Z'''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/PerPersonal" -Append $Append
+					$global:_departments = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFuturePerPersonal">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$personIdExternal
+					)
+					#$filter = "personIdExternal eq '$personIdExternal'"
+                    #$Append = '?$filter=' + $filter + '&$expand=parentNav,headOfUnitNav'
+                    #$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/PerPersonal" -Append $Append				
+					#return $result[0]
+					$department = $global:_departments | Where-Object -Property "externalCode" -eq $externalCode
+					return $department
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFEmployments">
+				<![CDATA[
+                    param()
+                    $Append = ''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpEmployment" -Append $Append
+					$global:_employments = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFEmployment">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$assignmentIdExternal
+					)
+					#$filter     = "assignmentIdExternal eq '$assignmentIdExternal'"
+                    #$Append     = '?$filter=' + $filter + ''
+                    #$result     = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpEmployment" -Append $Append				
+					$employment  = $global:_employments | Where-Object -Property "assignmentIdExternal" -eq $assignmentIdExternal
+					#return $result[0]
+					return $employment
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFutureEmployments">
+				<![CDATA[
+                    param()
+                    $today = Get-Date
+					[string]$fromDate = $today.AddDays(1).ToString("yyyy-MM-dd")
+					[string]$startDate = $today.ToString("yyyy-MM-dd")
+					[string]$toDate   = $today.AddDays(31).ToString("yyyy-MM-dd")
+                    $Append = '?fromDate=' + $fromDate + '&toDate=' + $toDate + '&$filter=startDate gt datetime''' + $startDate + 'T23:59:59Z'''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpEmployment" -Append $Append
+					$global:_employments = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFutureEmployment">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$assignmentIdExternal
+					)
+					#$filter     = "assignmentIdExternal eq '$assignmentIdExternal'"
+                    #$Append     = '?$filter=' + $filter + ''
+                    #$result     = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpEmployment" -Append $Append				
+					$employment  = $global:_employments | Where-Object -Property "assignmentIdExternal" -eq $assignmentIdExternal
+					#return $result[0]
+					return $employment
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFCostCenters">
+				<![CDATA[
+                    param()
+                    $Append = ''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FOCostCenter" -Append $Append
+					$global:_costCenters = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFCostCenter">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$externalCode
+					)
+					#$filter = "externalCode eq '$externalCode'"
+                    #$Append = '?$filter=' + $filter + ''
+                    #$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FOCostCenter" -Append $Append				
+					#return $result[0]
+					$costcenter = $global:_costCenters | Where-Object -Property "externalCode" -eq $externalCode
+					return $costcenter
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFPositions">
+				<![CDATA[
+                    param()
+                    $Append = ''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/Position" -Append $Append
+				    $global:_positions = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFPosition">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$code
+					)
+					#$filter = "code eq '$code'"
+                    #$Append = '?$filter=' + $filter + ''
+                    #$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/Position" -Append $Append				
+					#return $result[0]
+					$position = $global:_positions | Where-Object -Property "code" -eq $code
+					return $position
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFuturePositions">
+				<![CDATA[
+                    param()
+                    $today = Get-Date
+					[string]$fromDate = $today.AddDays(1).ToString("yyyy-MM-dd")
+					[string]$startDate = $today.ToString("yyyy-MM-dd")
+					[string]$toDate   = $today.AddDays(91).ToString("yyyy-MM-dd")
+                    $Append = '?fromDate=' + $fromDate + '&toDate=' + $toDate + '&$filter=effectiveStartDate gt datetime''' + $startDate + 'T23:59:59Z'''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/Position" -Append $Append
+				    $global:_positions = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFuturePosition">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$code
+					)
+					#$filter = "code eq '$code'"
+                    #$Append = '?$filter=' + $filter + ''
+                    #$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/Position" -Append $Append				
+					#return $result[0]
+					$position = $global:_positions | Where-Object -Property "code" -eq $code
+					return $position
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFJobFunctions">
+				<![CDATA[
+                    param()
+                    $Append = '?$expand=parentFunctionCodeNav'
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FOJobFunction" -Append $Append
+					$global:_jobFunctions = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFJobFunction">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$externalCode
+					)
+					#$filter = "externalCode eq '$externalCode'"
+                    #$Append = '?$filter=' + $filter + '&$expand=parentFunctionCodeNav'
+                    #$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FOJobFunction" -Append $Append				
+					#return $result[0]
+					$jobFunction = $global:_jobFunctions | Where-Object -Property "externalCode" -eq $externalCode
+					return $jobFunction
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFCompanies">
+				<![CDATA[
+                    param()
+                    $Append = ''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FOCompany" -Append $Append
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFCompany">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$externalCode
+					)
+					$filter = "externalCode eq '$externalCode'"
+                    $Append = '?$filter=' + $filter + ''
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FOCompany" -Append $Append				
+					return $result[0]
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFLocations">
+				<![CDATA[
+                    param()
+                    $Append = '?$expand=addressNavDEFLT'
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FOLocation" -Append $Append
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFLocation">
+				<![CDATA[
+                    param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[String]$externalCode
+					)
+					$filter = "externalCode eq '$externalCode'"
+                    $Append = '?$filter=' + $filter + '&$expand=addressNavDEFLT'
+                    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/FOLocation" -Append $Append				
+					return $result[0]
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFJobs">
+				<![CDATA[
+					param()
+					$Append = ''
+					$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpJob" -Append $Append "odata/v2/EmpJob"
+					$global:_jobs = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFJob">
+				<![CDATA[
+					param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[string]$userId,
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[string]$seqNumber,
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[DateTime]$startDate
+					)
+					[string]$DateFormatted = $startDate.ToString("yyyy-MM-ddT00:00:00")
+                    #$Append = '(seqNumber=' + $seqNumber + 'L,startDate=datetime''' + $DateFormatted + ''',userId=''' + $userId + ''')'
+					#$result = Invoke-SFRestMethodSingle -BaseUrl $global:_url -EndPoint "odata/v2/EmpJob" -Append $Append
+					$job = $global:_jobs | Where-Object { $_.Userid -eq $userId -And $_.SeqNumber -eq $seqNumber } # -And $_.StartDate -eq $tartDate}
+					#$job = $global:_jobs | Where-Object -Property "userId" -eq -Value $userId
+					return $job
+					#return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFutureJobs">
+				<![CDATA[
+					param()
+					$today = Get-Date
+					[string]$fromDate = $today.AddDays(1).ToString("yyyy-MM-dd")
+					[string]$startDate = $today.ToString("yyyy-MM-dd")
+					[string]$toDate   = $today.AddDays(91).ToString("yyyy-MM-dd")
+                    $Append = '?fromDate=' + $fromDate + '&toDate=' + $toDate + '&$filter=startDate gt datetime''' + $startDate + 'T23:59:59Z'''
+					$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpJob" -Append $Append "odata/v2/EmpJob"
+					$global:_jobs = $result
+					return $result
+				]]>
+			</CustomCommand>
+			<CustomCommand Name="Get-SFFutureJob">
+				<![CDATA[
+					param(
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[string]$userId,
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[string]$seqNumber,
+						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+						[DateTime]$startDate
+					)
+					[string]$DateFormatted = $startDate.ToString("yyyy-MM-ddT00:00:00")
+                    #$Append = '(seqNumber=' + $seqNumber + 'L,startDate=datetime''' + $DateFormatted + ''',userId=''' + $userId + ''')'
+					#$result = Invoke-SFRestMethodSingle -BaseUrl $global:_url -EndPoint "odata/v2/EmpJob" -Append $Append
+					$job = $global:_jobs | Where-Object { $_.Userid -eq $userId -And $_.SeqNumber -eq $seqNumber } # -And $_.StartDate -eq $tartDate}
+					#$job = $global:_jobs | Where-Object -Property "userId" -eq -Value $userId
+					return $job
+					#return $result
+				]]>
+			</CustomCommand>
+		</CustomCommands>
+		<PredefinedCommands>
+		</PredefinedCommands>
+		<EnvironmentInitialization>
+			<Connect>
+				<CommandSequence>
+					<Item Command="Connect-SF" Order="1">
+                        <SetParameter Param="BaseUrl" Source="ConnectionParameter" Value="BaseUrl" />
+                        <SetParameter Param="AuthUrl" Source="ConnectionParameter" Value="AuthUrl" />
+                        <SetParameter Param="TokenUrl" Source="ConnectionParameter" Value="TokenUrl" />
+                        <SetParameter Param="ClientId" Source="ConnectionParameter" Value="ClientId" />
+                        <SetParameter Param="ClientSecret" Source="ConnectionParameter" Value="ClientSecret" />
+                        <SetParameter Param="UserId" Source="ConnectionParameter" Value="UserId" />
+                        <SetParameter Param="CompanyId" Source="ConnectionParameter" Value="CompanyId" />
+                        <SetParameter Param="GrantType" Source="ConnectionParameter" Value="GrantType" />
+					</Item>
+				</CommandSequence>
+			</Connect>
+			<Disconnect>
+				<CommandSequence>
+					<Item Command="Close-SF" Order="1" />
+				</CommandSequence>
+			</Disconnect>
+
+		</EnvironmentInitialization>
+	</Initialization>
+
+	<Schema>
+		<Class Name="User">
+			<Properties>
+				<!--userId-->
+				<Property Name="userId" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="userId" />
+                        <Bind CommandResultOf="Get-SFUser" Path="userId" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFUser" Parameter="userId" />
+					 </CommandMappings>
+				</Property>
+				<!--AssignmentIdExternal-->
+				<Property Name="AssignmentIdExternal" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="AssignmentIdExternal" />
+                        <Bind CommandResultOf="Get-SFUser" Path="AssignmentIdExternal" />
+					</ReturnBindings>
+				</Property>
+                <!--firstName-->
+				<Property Name="firstName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="firstName" />
+                        <Bind CommandResultOf="Get-SFUser" Path="firstName" />
+					</ReturnBindings>
+				</Property>
+				<!--Mi-->
+				<Property Name="mi" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="mi" />
+                        <Bind CommandResultOf="Get-SFUser" Path="mi" />
+					</ReturnBindings>
+				</Property>
+                <!--lastName-->
+				<Property Name="lastName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="lastName" />
+                        <Bind CommandResultOf="Get-SFUser" Path="lastName" />
+					</ReturnBindings>
+				</Property>
+                <!--gender-->
+				<Property Name="gender" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="gender" />
+                        <Bind CommandResultOf="Get-SFUser" Path="gender" />
+					</ReturnBindings>
+				</Property>
+                <!--externalCode-->
+				<!--<Property Name="externalCode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="externalCode" />
+                        <Bind CommandResultOf="Get-SFUser" Path="externalCode" />
+					</ReturnBindings>
+				</Property>-->
+                <!--department-->
+				<Property Name="department" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="department" />
+                        <Bind CommandResultOf="Get-SFUser" Path="department" />
+					</ReturnBindings>
+				</Property>
+                <!--location-->
+				<Property Name="location" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="location" />
+                        <Bind CommandResultOf="Get-SFUser" Path="location" />
+					</ReturnBindings>
+				</Property>
+                <!--hireDate-->
+				<Property Name="hireDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="hireDate" />
+                        <Bind CommandResultOf="Get-SFUser" Path="hireDate" />
+					</ReturnBindings>
+				</Property>
+                
+                <!--manager.userId-->
+				<Property Name="managerUserId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="manager.userId" />
+                        <Bind CommandResultOf="Get-SFUser" Path="manager.userId" />
+					</ReturnBindings>
+				</Property>
+                <!--manager.displayName-->
+				<Property Name="managerDisplayName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="manager.displayName" />
+                        <Bind CommandResultOf="Get-SFUser" Path="manager.displayName" />
+					</ReturnBindings>
+				</Property>
+                <!--businessPhone-->
+				<Property Name="businessPhone" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="businessPhone" />
+                        <Bind CommandResultOf="Get-SFUser" Path="businessPhone" />
+					</ReturnBindings>
+				</Property>
+                <!--email-->
+				<Property Name="email" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="email" />
+                        <Bind CommandResultOf="Get-SFUser" Path="email" />
+					</ReturnBindings>
+				</Property>
+                <!--username-->
+				<Property Name="username" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="username" />
+                        <Bind CommandResultOf="Get-SFUser" Path="username" />
+					</ReturnBindings>
+				</Property>
+                <!--title-->
+				<Property Name="title" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="title" />
+                        <Bind CommandResultOf="Get-SFUser" Path="title" />
+					</ReturnBindings>
+				</Property>
+				<!--position-->
+				<Property Name="position" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFUsers" Path="empInfo.jobInfoNav.results[0].position" />
+                        <Bind CommandResultOf="Get-SFUser" Path="empInfo.jobInfoNav.results[0].position" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFUsers">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFUser" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			</Class>
+			<Class Name="FutureUser">
+			<Properties>
+				<!--userId-->
+				<Property Name="userId" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="userId" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="userId" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFutureUser" Parameter="userId" />
+					 </CommandMappings>
+				</Property>
+				<!--AssignmentIdExternal-->
+				<Property Name="AssignmentIdExternal" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="AssignmentIdExternal" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="AssignmentIdExternal" />
+					</ReturnBindings>
+				</Property>
+                <!--firstName-->
+				<Property Name="firstName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="firstName" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="firstName" />
+					</ReturnBindings>
+				</Property>
+				<!--Mi-->
+				<Property Name="mi" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="mi" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="mi" />
+					</ReturnBindings>
+				</Property>
+                <!--lastName-->
+				<Property Name="lastName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="lastName" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="lastName" />
+					</ReturnBindings>
+				</Property>
+                <!--gender-->
+				<Property Name="gender" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="gender" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="gender" />
+					</ReturnBindings>
+				</Property>
+                <!--externalCode-->
+				<!--<Property Name="externalCode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="externalCode" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="externalCode" />
+					</ReturnBindings>
+				</Property>-->
+                <!--department-->
+				<Property Name="department" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="department" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="department" />
+					</ReturnBindings>
+				</Property>
+                <!--location-->
+				<Property Name="location" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="location" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="location" />
+					</ReturnBindings>
+				</Property>
+                <!--hireDate-->
+				<Property Name="hireDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="hireDate" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="hireDate" />
+					</ReturnBindings>
+				</Property>
+                
+                <!--manager.userId-->
+				<Property Name="managerUserId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="manager.userId" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="manager.userId" />
+					</ReturnBindings>
+				</Property>
+                <!--manager.displayName-->
+				<Property Name="managerDisplayName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="manager.displayName" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="manager.displayName" />
+					</ReturnBindings>
+				</Property>
+                <!--businessPhone-->
+				<Property Name="businessPhone" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="businessPhone" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="businessPhone" />
+					</ReturnBindings>
+				</Property>
+                <!--email-->
+				<Property Name="email" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="email" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="email" />
+					</ReturnBindings>
+				</Property>
+                <!--username-->
+				<Property Name="username" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="username" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="username" />
+					</ReturnBindings>
+				</Property>
+                <!--title-->
+				<Property Name="title" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="title" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="title" />
+					</ReturnBindings>
+				</Property>
+				<!--position-->
+				<!--<Property Name="position" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureUsers" Path="empInfo.jobInfoNav.results[0].position" />
+                        <Bind CommandResultOf="Get-SFFutureUser" Path="empInfo.jobInfoNav.results[0].position" />
+					</ReturnBindings>
+				</Property>-->
+			</Properties>
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFFutureUsers">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFFutureUser" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			</Class>
+			<Class Name="PerPersonal">
+			<Properties>
+				<!--personIdExternal-->
+				<Property Name="personIdExternal" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPerPersonals" Path="personIdExternal" />
+                        <Bind CommandResultOf="Get-SFPerPersonal" Path="personIdExternal" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFPerPersonal" Parameter="personIdExternal" />
+					 </CommandMappings>
+				</Property>
+                <!--firstName-->
+				<Property Name="firstName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPerPersonals" Path="firstName" />
+                        <Bind CommandResultOf="Get-SFPerPersonal" Path="firstName" />
+					</ReturnBindings>
+				</Property>
+				<!--middleName-->
+				<Property Name="middleName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPerPersonals" Path="middleName" />
+                        <Bind CommandResultOf="Get-SFPerPersonal" Path="middleName" />
+					</ReturnBindings>
+				</Property>
+                <!--lastName-->
+				<Property Name="lastName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPerPersonals" Path="lastName" />
+                        <Bind CommandResultOf="Get-SFPerPersonal" Path="lastName" />
+					</ReturnBindings>
+				</Property>
+                <!--gender-->
+				<Property Name="gender" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPerPersonals" Path="gender" />
+                        <Bind CommandResultOf="Get-SFPerPersonal" Path="gender" />
+					</ReturnBindings>
+				</Property>
+                <!--startDate-->
+				<Property Name="startDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPerPersonals" Path="startDate" />
+                        <Bind CommandResultOf="Get-SFPerPersonal" Path="startDate" />
+					</ReturnBindings>
+				</Property>
+                <!--endDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPerPersonals" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFPerPersonal" Path="endDate" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFPerPersonals">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFPerPersonal" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			</Class>
+			<Class Name="FuturePerPersonal">
+			<Properties>
+				<!--personIdExternal-->
+				<Property Name="personIdExternal" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePerPersonals" Path="personIdExternal" />
+                        <Bind CommandResultOf="Get-SFFuturePerPersonal" Path="personIdExternal" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFuturePerPersonal" Parameter="personIdExternal" />
+					 </CommandMappings>
+				</Property>
+                <!--firstName-->
+				<Property Name="firstName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePerPersonals" Path="firstName" />
+                        <Bind CommandResultOf="Get-SFFuturePerPersonal" Path="firstName" />
+					</ReturnBindings>
+				</Property>
+				<!--middleName-->
+				<Property Name="middleName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePerPersonals" Path="middleName" />
+                        <Bind CommandResultOf="Get-SFFuturePerPersonal" Path="middleName" />
+					</ReturnBindings>
+				</Property>
+                <!--lastName-->
+				<Property Name="lastName" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePerPersonals" Path="lastName" />
+                        <Bind CommandResultOf="Get-SFFuturePerPersonal" Path="lastName" />
+					</ReturnBindings>
+				</Property>
+                <!--gender-->
+				<Property Name="gender" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePerPersonals" Path="gender" />
+                        <Bind CommandResultOf="Get-SFFuturePerPersonal" Path="gender" />
+					</ReturnBindings>
+				</Property>
+                <!--startDate-->
+				<Property Name="startDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePerPersonals" Path="startDate" />
+                        <Bind CommandResultOf="Get-SFFuturePerPersonal" Path="startDate" />
+					</ReturnBindings>
+				</Property>
+                <!--endDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePerPersonals" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFFuturePerPersonal" Path="endDate" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+
+			<!--
+				The read configuration is mandatory. It defines the ListingCommand which is used to pull
+				a list of all objects of this type from the system. Furthermore, the additional commandsequence
+				defines the list of commands, that need to be executed to fully load a single object with all
+				properties defined in the schema
+			-->
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFFuturePerPersonals">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFFuturePerPersonal" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+
+			<!--
+				The MethodConfiguration section describes all methods that are available for this class. In order to stay compatible with
+				the OneIM Projector, you schould use the name
+					- Insert -> Commands that create a new object
+					- Update -> Commands that modify an exisiting object
+					- Delete -> Commands that delete an exisiting object
+			-->	  
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="Department">
+			<Properties>
+				<!--externalCode-->
+				<Property Name="externalCode" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="externalCode" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="externalCode" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFDepartment" Parameter="externalCode" />
+					 </CommandMappings>
+				</Property>
+				<!--name-->
+				<Property Name="name" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="name" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="name" />
+					</ReturnBindings>
+				</Property>
+				<!--name_da_DK-->
+				<Property Name="name_da_DK" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="name_da_DK" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="name_da_DK" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_objectShort-->
+				<Property Name="cust_objectShort" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="cust_objectShort" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="cust_objectShort" />
+					</ReturnBindings>
+				</Property>
+				<!--costCenter-->
+				<Property Name="costCenter" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="costCenter" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="costCenter" />
+					</ReturnBindings>
+				</Property>
+				<!--Status-->
+				<Property Name="status" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="status" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="status" />
+					</ReturnBindings>
+				</Property>
+				<!--Description-->
+				<Property Name="description" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="description" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="description" />
+					</ReturnBindings>
+				</Property>
+				<!--startDate-->
+				<Property Name="startDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="startDate" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="startDate" />
+					</ReturnBindings>
+				</Property>
+				<!--endDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="endDate" />
+					</ReturnBindings>
+				</Property>
+				<!--parent-->
+				<Property Name="parent" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="parent" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="parent" />
+					</ReturnBindings>
+				</Property>
+				<!--headOfUnit-->
+				<Property Name="headOfUnit" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFDepartments" Path="headOfUnit" />
+                        <Bind CommandResultOf="Get-SFDepartment" Path="headOfUnit" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFDepartments">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFDepartment" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="CostCenter">
+			<Properties>
+				<!--externalCode-->
+				<Property Name="externalCode" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCostCenters" Path="externalCode" />
+                        <Bind CommandResultOf="Get-SFCostCenter" Path="externalCode" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFCostCenter" Parameter="externalCode" />
+					 </CommandMappings>
+				</Property>
+				<!--name-->
+				<Property Name="name" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCostCenters" Path="name" />
+                        <Bind CommandResultOf="Get-SFCostCenter" Path="name" />
+					</ReturnBindings>
+				</Property>
+				<!--name_localized-->
+				<Property Name="name_localized" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCostCenters" Path="name_da_DK" />
+                        <Bind CommandResultOf="Get-SFCostCenter" Path="name_da_DK" />
+					</ReturnBindings>
+				</Property>
+				<!--Description-->
+				<Property Name="description" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCostCenters" Path="description" />
+                        <Bind CommandResultOf="Get-SFCostCenter" Path="description" />
+					</ReturnBindings>
+				</Property>
+				<!--startDate-->
+				<Property Name="startDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCostCenters" Path="startDate" />
+                        <Bind CommandResultOf="Get-SFCostCenter" Path="startDate" />
+					</ReturnBindings>
+				</Property>
+				<!--endDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCostCenters" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFCostCenter" Path="endDate" />
+					</ReturnBindings>
+				</Property>
+				<!--parent-->
+				<Property Name="parent" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCostCenters" Path="parent" />
+                        <Bind CommandResultOf="Get-SFCostCenter" Path="parent" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFCostCenters">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFCostCenter" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="Employment">
+			<Properties>
+				<!--assignmentIdExternal-->
+				<Property Name="assignmentIdExternal" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="assignmentIdExternal" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="assignmentIdExternal" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFEmployment" Parameter="assignmentIdExternal" />
+					 </CommandMappings>
+				</Property>	
+				<!--externalCode-->
+				<Property Name="employmentId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="employmentId" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="employmentId" />
+					</ReturnBindings>
+				</Property>
+				<!--personIdExternal-->
+				<Property Name="personIdExternal" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="personIdExternal" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="personIdExternal" />
+					</ReturnBindings>
+				</Property>
+				<!--userId-->
+				<Property Name="userId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="userId" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="userId" />
+					</ReturnBindings>
+				</Property>
+				<!--assignmentClass-->
+				<Property Name="assignmentClass" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="assignmentClass" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="assignmentClass" />
+					</ReturnBindings>
+				</Property>
+				<!--originalStartDate-->
+				<Property Name="originalStartDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="originalStartDate" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="originalStartDate" />
+					</ReturnBindings>
+				</Property>
+				<!--endDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="endDate" />
+					</ReturnBindings>
+				</Property>	
+				<!--lastDateWorked-->
+				<Property Name="lastDateWorked" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="lastDateWorked" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="lastDateWorked" />
+					</ReturnBindings>
+				</Property>
+				<!--seniorityDate-->
+				<Property Name="seniorityDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFEmployments" Path="seniorityDate" />
+                        <Bind CommandResultOf="Get-SFEmployment" Path="seniorityDate" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFEmployments">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFEmployment" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="FutureEmployment">
+			<Properties>
+				<!--assignmentIdExternal-->
+				<Property Name="assignmentIdExternal" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="assignmentIdExternal" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="assignmentIdExternal" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFutureEmployment" Parameter="assignmentIdExternal" />
+					 </CommandMappings>
+				</Property>	
+				<!--externalCode-->
+				<Property Name="employmentId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="employmentId" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="employmentId" />
+					</ReturnBindings>
+				</Property>
+				<!--personIdExternal-->
+				<Property Name="personIdExternal" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="personIdExternal" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="personIdExternal" />
+					</ReturnBindings>
+				</Property>
+				<!--userId-->
+				<Property Name="userId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="userId" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="userId" />
+					</ReturnBindings>
+				</Property>
+				<!--assignmentClass-->
+				<Property Name="assignmentClass" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="assignmentClass" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="assignmentClass" />
+					</ReturnBindings>
+				</Property>
+				<!--originalStartDate-->
+				<Property Name="originalStartDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="originalStartDate" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="originalStartDate" />
+					</ReturnBindings>
+				</Property>
+				<!--startDate-->
+				<Property Name="startDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="startDate" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="startDate" />
+					</ReturnBindings>
+				</Property>	
+				<!--endDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="endDate" />
+					</ReturnBindings>
+				</Property>	
+				<!--lastDateWorked-->
+				<Property Name="lastDateWorked" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="lastDateWorked" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="lastDateWorked" />
+					</ReturnBindings>
+				</Property>
+				<!--seniorityDate-->
+				<Property Name="seniorityDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureEmployments" Path="seniorityDate" />
+                        <Bind CommandResultOf="Get-SFFutureEmployment" Path="seniorityDate" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFFutureEmployments">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFFutureEmployment" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="JobFunction">
+			<Properties>
+				<!--externalCode-->
+				<Property Name="externalCode" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="externalCode" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="externalCode" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFJobFunction" Parameter="externalCode" />
+					 </CommandMappings>
+				</Property>
+				<!--name-->
+				<Property Name="name" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="name" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="name" />
+					</ReturnBindings>
+				</Property>
+				<!--name_localized-->
+				<Property Name="name_localized" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="name" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="name" />
+					</ReturnBindings>
+				</Property>
+				<!--Description-->
+				<Property Name="Description" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="Description" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="Description" />
+					</ReturnBindings>
+				</Property>
+				<!--status-->
+				<Property Name="status" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="status" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="status" />
+					</ReturnBindings>
+				</Property>
+				<!--startDate-->
+				<Property Name="startDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="startDate" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="startDate" />
+					</ReturnBindings>
+				</Property>
+				<!--startDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="endDate" />
+					</ReturnBindings>
+				</Property>
+				<!--type-->
+				<Property Name="type" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="type" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="type" />
+					</ReturnBindings>
+				</Property>
+				<!--costCenter-->
+				<Property Name="costCenter" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobFunctions" Path="costCenter" />
+                        <Bind CommandResultOf="Get-SFJobFunction" Path="costCenter" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFJobFunctions">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFJobFunction" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="Position">
+			<Properties>
+				<!--code-->
+				<Property Name="code" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="code" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="code" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFPosition" Parameter="code" />
+					 </CommandMappings>
+				</Property>
+				<!--externalName_defaultValue-->
+				<Property Name="externalName_defaultValue" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="externalName_defaultValue" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="externalName_defaultValue" />
+					</ReturnBindings>
+				</Property>
+				<!--effectiveStatus-->
+				<Property Name="effectiveStatus" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="effectiveStatus" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="effectiveStatus" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_Stillingsniveau-->
+				<Property Name="cust_Stillingsniveau" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="cust_Stillingsniveau" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="cust_Stillingsniveau" />
+					</ReturnBindings>
+				</Property>
+				<!--jobTitle-->
+				<Property Name="jobTitle" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="jobTitle" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="jobTitle" />
+					</ReturnBindings>
+				</Property>
+				<!--businessUnit-->
+				<Property Name="businessUnit" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="businessUnit" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="businessUnit" />
+					</ReturnBindings>
+				</Property>
+				<!--jobCode-->
+				<Property Name="jobCode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="jobCode" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="jobCode" />
+					</ReturnBindings>
+				</Property>
+				<!--effectiveStartDate-->
+				<Property Name="effectiveStartDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="effectiveStartDate" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="effectiveStartDate" />
+					</ReturnBindings>
+				</Property>
+				<!--effectiveEndDate-->
+				<Property Name="effectiveEndDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="effectiveEndDate" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="effectiveEndDate" />
+					</ReturnBindings>
+				</Property>
+				<!--costCenter-->
+				<Property Name="costCenter" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="costCenter" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="costCenter" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_StillingsniveauNav costCenter-->
+				<!--<Property Name="cust_StillingsniveauNav" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="cust_StillingsniveauNav" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="cust_StillingsniveauNav" />
+					</ReturnBindings>
+				</Property>-->
+			</Properties>
+			
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFPositions">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFPosition" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="FuturePosition">
+			<Properties>
+				<!--code-->
+				<Property Name="code" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="code" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="code" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFuturePosition" Parameter="code" />
+					 </CommandMappings>
+				</Property>
+				<!--externalName_defaultValue-->
+				<Property Name="externalName_defaultValue" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="externalName_defaultValue" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="externalName_defaultValue" />
+					</ReturnBindings>
+				</Property>
+				<!--effectiveStatus-->
+				<Property Name="effectiveStatus" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="effectiveStatus" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="effectiveStatus" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_Stillingsniveau-->
+				<Property Name="cust_Stillingsniveau" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="cust_Stillingsniveau" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="cust_Stillingsniveau" />
+					</ReturnBindings>
+				</Property>
+				<!--jobTitle-->
+				<Property Name="jobTitle" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="jobTitle" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="jobTitle" />
+					</ReturnBindings>
+				</Property>
+				<!--businessUnit-->
+				<Property Name="businessUnit" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="businessUnit" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="businessUnit" />
+					</ReturnBindings>
+				</Property>
+				<!--jobCode-->
+				<Property Name="jobCode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="jobCode" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="jobCode" />
+					</ReturnBindings>
+				</Property>
+				<!--effectiveStartDate-->
+				<Property Name="effectiveStartDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="effectiveStartDate" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="effectiveStartDate" />
+					</ReturnBindings>
+				</Property>
+				<!--effectiveEndDate-->
+				<Property Name="effectiveEndDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="effectiveEndDate" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="effectiveEndDate" />
+					</ReturnBindings>
+				</Property>
+				<!--changereason-->
+				<Property Name="changereason" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="changereason" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="changereason" />
+					</ReturnBindings>
+				</Property>
+				<!--costCenter-->
+				<Property Name="costCenter" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="costCenter" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="costCenter" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_StillingsniveauNav-->
+				<!--<Property Name="cust_StillingsniveauNav" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="cust_StillingsniveauNav" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="cust_StillingsniveauNav" />
+					</ReturnBindings>
+				</Property>-->
+			</Properties>
+			
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFFuturePositions">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFFuturePosition" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="FOCompany">
+			<Properties>
+				<!--externalCode-->
+				<Property Name="externalCode" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCompanies" Path="externalCode" />
+                        <Bind CommandResultOf="Get-SFCompany" Path="externalCode" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFCompany" Parameter="externalCode" />
+					 </CommandMappings>
+				</Property>
+				<!--country-->
+				<Property Name="country" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCompanies" Path="country" />
+                        <Bind CommandResultOf="Get-SFCompany" Path="country" />
+					</ReturnBindings>
+				</Property>
+				<!--name-->
+				<Property Name="name" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCompanies" Path="name" />
+                        <Bind CommandResultOf="Get-SFCompany" Path="name" />
+					</ReturnBindings>
+				</Property>
+				<!--name_localized-->
+				<Property Name="name_localized" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCompanies" Path="name_localized" />
+                        <Bind CommandResultOf="Get-SFCompany" Path="name_localized" />
+					</ReturnBindings>
+				</Property>
+				<!--description-->
+				<Property Name="description" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCompanies" Path="description" />
+                        <Bind CommandResultOf="Get-SFCompany" Path="description" />
+					</ReturnBindings>
+				</Property>
+				<!--status-->
+				<Property Name="status" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFCompanies" Path="status" />
+                        <Bind CommandResultOf="Get-SFCompany" Path="status" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFCompanies">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFCompany" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="FOLocation">
+			<Properties>
+				<!--externalCode-->
+				<Property Name="externalCode" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="externalCode" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="externalCode" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFLocation" Parameter="externalCode" />
+					 </CommandMappings>
+				</Property>
+				<!--name-->
+				<Property Name="name" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="name" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="name" />
+					</ReturnBindings>
+				</Property>
+				<!--timezone-->
+				<Property Name="timezone" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="timezone" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="timezone" />
+					</ReturnBindings>
+				</Property>
+				<!--addressNavDEFLTaddressId-->
+				<Property Name="addressNavDEFLTaddressId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="addressNavDEFLT.addressId" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="addressNavDEFLT.addressId" />
+					</ReturnBindings>
+				</Property>
+				<!--addressNavDEFLTzipCode-->
+				<Property Name="addressNavDEFLTzipCode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="addressNavDEFLT.zipCode" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="addressNavDEFLT.zipCode" />
+					</ReturnBindings>
+				</Property>
+				<!--addressNavDEFLTcity-->
+				<Property Name="addressNavDEFLTcity" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="addressNavDEFLT.city" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="addressNavDEFLT.city" />
+					</ReturnBindings>
+				</Property>
+				<!--addressNavDEFLTaddress1-->
+				<Property Name="addressNavDEFLTaddress1" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="addressNavDEFLT.address1" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="addressNavDEFLT.address1" />
+					</ReturnBindings>
+				</Property>
+				<!--addressNavDEFLTaddress2-->
+				<Property Name="addressNavDEFLTaddress2" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="addressNavDEFLT.address2" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="addressNavDEFLT.address2" />
+					</ReturnBindings>
+				</Property>
+				<!--addressNavDEFLTaddress3-->
+				<Property Name="addressNavDEFLTaddress3" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFLocations" Path="addressNavDEFLT.address3" />
+                        <Bind CommandResultOf="Get-SFLocation" Path="addressNavDEFLT.address3" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFLocations">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFLocation" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="EmpJob">
+			<Properties>
+				<!--userId-->
+				<Property Name="userId"  DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly" IsDisplay="true">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="userId" />
+                        <Bind CommandResultOf="Get-SFJob" Path="userId" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFJob" Parameter="userId" />
+					 </CommandMappings>
+				</Property>
+				<!--seqNumber-->
+				<Property Name="seqNumber" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly" IsDisplay="true">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="seqNumber" />
+                        <Bind CommandResultOf="Get-SFJob" Path="seqNumber" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFJob" Parameter="seqNumber" />
+					 </CommandMappings>
+				</Property>
+				<!--startDate-->
+				<Property Name="startDate" DataType="DateTime" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly" IsDisplay="true">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="startDate" />
+                        <Bind CommandResultOf="Get-SFJob" Path="startDate" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFJob" Parameter="startDate" />
+					</CommandMappings>
+				</Property>
+				<!--endDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFJob" Path="endDate" />
+					</ReturnBindings>
+				</Property>
+				<!--effectiveLatestChange-->
+				<Property Name="effectiveLatestChange" DataType="Bool" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="effectiveLatestChange" />
+                        <Bind CommandResultOf="Get-SFJob" Path="effectiveLatestChange" />
+					</ReturnBindings>
+				</Property>
+				<!--jobCode-->
+				<Property Name="jobCode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="jobCode" />
+                        <Bind CommandResultOf="Get-SFJob" Path="jobCode" />
+					</ReturnBindings>
+				</Property>
+				<!--division-->
+				<Property Name="division" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="division" />
+                        <Bind CommandResultOf="Get-SFJob" Path="division" />
+					</ReturnBindings>
+				</Property>
+				<!--position-->
+				<Property Name="position" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="position" />
+                        <Bind CommandResultOf="Get-SFJob" Path="position" />
+					</ReturnBindings>
+				</Property>
+				<!--emplStatus-->
+				<Property Name="emplStatus" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="emplStatus" />
+                        <Bind CommandResultOf="Get-SFJob" Path="emplStatus" />
+					</ReturnBindings>
+				</Property>
+				<!--countryOfCompany-->
+				<Property Name="countryOfCompany" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="countryOfCompany" />
+                        <Bind CommandResultOf="Get-SFJob" Path="countryOfCompany" />
+					</ReturnBindings>
+				</Property>
+				<!--company-->
+				<Property Name="company" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="company" />
+                        <Bind CommandResultOf="Get-SFJob" Path="company" />
+					</ReturnBindings>
+				</Property>
+				<!--department-->
+				<Property Name="department" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="department" />
+                        <Bind CommandResultOf="Get-SFJob" Path="department" />
+					</ReturnBindings>
+				</Property>
+				<!--event-->
+				<Property Name="event" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="event" />
+                        <Bind CommandResultOf="Get-SFJob" Path="event" />
+					</ReturnBindings>
+				</Property>
+				<!--customString19-->
+				<Property Name="customString19" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="customString19" />
+                        <Bind CommandResultOf="Get-SFJob" Path="customString19" />
+					</ReturnBindings>
+				</Property>
+				<!--customString5-->
+				<Property Name="customString5" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="customString5" />
+                        <Bind CommandResultOf="Get-SFJob" Path="customString5" />
+					</ReturnBindings>
+				</Property>
+				<!--customString10-->
+				<Property Name="customString10" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="customString10" />
+                        <Bind CommandResultOf="Get-SFJob" Path="customString10" />
+					</ReturnBindings>
+				</Property>
+				<!--customString4-->
+				<Property Name="customString4" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="customString4" />
+                        <Bind CommandResultOf="Get-SFJob" Path="customString4" />
+					</ReturnBindings>
+				</Property>
+				<!--customString11-->
+				<Property Name="customString11" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="customString11" />
+                        <Bind CommandResultOf="Get-SFJob" Path="customString11" />
+					</ReturnBindings>
+				</Property>
+				<!--customString3-->
+				<Property Name="customString3" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="customString3" />
+                        <Bind CommandResultOf="Get-SFJob" Path="customString3" />
+					</ReturnBindings>
+				</Property>
+				<!--customString2-->
+				<Property Name="customString2" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="customString2" />
+                        <Bind CommandResultOf="Get-SFJob" Path="customString2" />
+					</ReturnBindings>
+				</Property>
+				<!--managerId-->
+				<Property Name="managerId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="managerId" />
+                        <Bind CommandResultOf="Get-SFJob" Path="managerId" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFJobs">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFJob" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+		<Class Name="FutureEmpJob">
+			<Properties>
+				<!--userId-->
+				<Property Name="userId"  DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly" IsDisplay="true">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="userId" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="userId" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFutureJob" Parameter="userId" />
+					 </CommandMappings>
+				</Property>
+				<!--seqNumber-->
+				<Property Name="seqNumber" DataType="String" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly" IsDisplay="true">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="seqNumber" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="seqNumber" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFutureJob" Parameter="seqNumber" />
+					 </CommandMappings>
+				</Property>
+				<!--startDate-->
+				<Property Name="startDate" DataType="DateTime" IsUniqueKey="true" IsMandatory="true" IsAutoFill="false" AccessConstraint="ReadOnly" IsDisplay="true">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="startDate" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="startDate" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFutureJob" Parameter="startDate" />
+					</CommandMappings>
+				</Property>
+				<!--endDate-->
+				<Property Name="endDate" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="endDate" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="endDate" />
+					</ReturnBindings>
+				</Property>
+				<!--effectiveLatestChange-->
+				<Property Name="effectiveLatestChange" DataType="Bool" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="effectiveLatestChange" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="effectiveLatestChange" />
+					</ReturnBindings>
+				</Property>
+				<!--jobCode-->
+				<Property Name="jobCode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="jobCode" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="jobCode" />
+					</ReturnBindings>
+				</Property>
+				<!--division-->
+				<Property Name="division" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="division" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="division" />
+					</ReturnBindings>
+				</Property>
+				<!--position-->
+				<Property Name="position" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="position" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="position" />
+					</ReturnBindings>
+				</Property>
+				<!--emplStatus-->
+				<Property Name="emplStatus" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="emplStatus" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="emplStatus" />
+					</ReturnBindings>
+				</Property>
+				<!--countryOfCompany-->
+				<Property Name="countryOfCompany" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="countryOfCompany" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="countryOfCompany" />
+					</ReturnBindings>
+				</Property>
+				<!--company-->
+				<Property Name="company" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="company" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="company" />
+					</ReturnBindings>
+				</Property>
+				<!--department-->
+				<Property Name="department" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="department" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="department" />
+					</ReturnBindings>
+				</Property>
+				<!--event-->
+				<Property Name="event" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="event" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="event" />
+					</ReturnBindings>
+				</Property>
+				<!--customString19-->
+				<Property Name="customString19" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="customString19" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="customString19" />
+					</ReturnBindings>
+				</Property>
+				<!--customString5-->
+				<Property Name="customString5" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="customString5" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="customString5" />
+					</ReturnBindings>
+				</Property>
+				<!--customString10-->
+				<Property Name="customString10" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="customString10" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="customString10" />
+					</ReturnBindings>
+				</Property>
+				<!--customString4-->
+				<Property Name="customString4" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="customString4" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="customString4" />
+					</ReturnBindings>
+				</Property>
+				<!--customString11-->
+				<Property Name="customString11" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="customString11" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="customString11" />
+					</ReturnBindings>
+				</Property>
+				<!--customString3-->
+				<Property Name="customString3" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="customString3" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="customString3" />
+					</ReturnBindings>
+				</Property>
+				<!--customString2-->
+				<Property Name="customString2" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="customString2" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="customString2" />
+					</ReturnBindings>
+				</Property>
+				<!--managerId-->
+				<Property Name="managerId" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="managerId" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="managerId" />
+					</ReturnBindings>
+				</Property>
+			</Properties>
+			<ReadConfiguration>
+				<ListingCommand Command="Get-SFFutureJobs">
+					
+				</ListingCommand>
+				<CommandSequence>
+                        <Item Command="Get-SFFutureJob" Order="1" >
+                        </Item>
+				</CommandSequence>
+			</ReadConfiguration>
+			<MethodConfiguration>
+			</MethodConfiguration>
+		</Class>
+	</Schema>
+</PowershellConnectorDefinition>
