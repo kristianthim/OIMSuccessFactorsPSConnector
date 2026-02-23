@@ -20,6 +20,94 @@
 
 	<Initialization>
 		<CustomCommands>
+			<CustomCommand Name="Select-RelevantEmpJobRow">
+				<![CDATA[							
+				    [CmdletBinding()]
+				    param(
+				        [Parameter(Mandatory)]
+				        [object[]]$EmpJobs,
+				
+				        # Compare at the date level to avoid time-of-day surprises
+				        [datetime]$Today = (Get-Date).Date,
+				
+				        # Optional: if you want to *also* see the computed Start/End used for selection,
+				        # set this switch; it adds *temporary* NoteProperties that you can strip later.
+				        [switch]$IncludeComputedDates
+				    )
+				
+				    if (-not $EmpJobs -or $EmpJobs.Count -eq 0) { return @() }
+				
+				    # Local helpers
+				    function Convert-ToSafeDate {
+				        param([object]$value)
+				        if ($null -eq $value) { return $null }
+				        if ($value -is [datetime]) { return $value }
+				        try { return [datetime]$value } catch { return (Get-Date $value) }
+				    }
+				
+				    $grouped = $EmpJobs | Group-Object userId
+				
+				    $results = foreach ($g in $grouped) {
+				
+				        # Build a side-list with computed dates but keep a pointer to the original row
+				        $computed = foreach ($row in $g.Group) {
+				            $sd = Convert-ToSafeDate $row.startDate
+				            $ed = Convert-ToSafeDate $row.endDate
+				
+				            # Treat open-ended end as max
+				            $isOpenEnded = ($null -eq $ed -or ($ed -is [datetime] -and $ed.Year -ge 9999))
+				            if ($isOpenEnded) {
+				                $ed = [datetime]::MaxValue
+				            }
+				
+				            # If endDate is exactly midnight, treat as inclusive to end-of-day
+				            $edInclusive = if ($ed -ne [datetime]::MaxValue -and $ed.TimeOfDay -eq [TimeSpan]::Zero) {
+				                $ed.AddDays(1).AddSeconds(-1)
+				            } else {
+				                $ed
+				            }
+				
+				            # Return a tiny computed record that *references the original row*
+				            [pscustomobject]@{
+				                Row   = $row           # <-- original object, untouched
+				                Start = $sd
+				                End   = $edInclusive
+				            }
+				        }
+				
+				        # 1) Prefer the row active today
+				        $active = $computed |
+				            Where-Object { $_.Start -le $Today -and $_.End -ge $Today } |
+				            Sort-Object Start -Descending |
+				            Select-Object -First 1
+				
+				        $chosen = if ($active) {
+				            $active
+				        } else {
+				            # 2) Otherwise pick closest Start to Today; prefer future on tie, then earliest
+				            $computed |
+				                Sort-Object `
+				                    @{ Expression = { [math]::Abs(($_.Start - $Today).TotalSeconds) }; Ascending = $true }, `
+				                    @{ Expression = { if ($_.Start -ge $Today) { 0 } else { 1 } }; Ascending = $true }, `
+				                    @{ Expression = { $_.Start }; Ascending = $true } |
+				                Select-Object -First 1
+				        }
+				
+				        if ($IncludeComputedDates) {
+				            # Add temporary computed fields to the returned original row (optional)
+				            $chosen.Row | Add-Member -NotePropertyName _ComputedStart -NotePropertyValue $chosen.Start -Force
+				            $chosen.Row | Add-Member -NotePropertyName _ComputedEnd   -NotePropertyValue $chosen.End   -Force
+				        }
+				
+				        # IMPORTANT: return the original object, not the wrapper
+				        $chosen.Row
+				    }
+				
+				    # Always return an array
+				    return ,$results
+
+				]]>
+			</CustomCommand>
             <CustomCommand Name="Get-SFAssertion">
                 <![CDATA[
                     param(
@@ -561,15 +649,82 @@
 			</CustomCommand>
 			<CustomCommand Name="Get-SFFutureJobs">
 				<![CDATA[
-					param()
-					$today = Get-Date
-					[string]$fromDate = $today.AddDays(1).ToString("yyyy-MM-dd")
-					[string]$startDate = $today.ToString("yyyy-MM-dd")
-					[string]$toDate   = $today.AddDays(91).ToString("yyyy-MM-dd")
-                    $Append = '?fromDate=' + $fromDate + '&toDate=' + $toDate + '&$filter=startDate gt datetime''' + $startDate + 'T23:59:59Z'''
-					$result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpJob" -Append $Append "odata/v2/EmpJob"
-					$global:_jobs = $result
-					return $result
+					[CmdletBinding()]
+				    param()
+					[int]$HorizonDays = 91
+				    [bool]$UseEffectiveLatestChange = $true
+								
+				    $today     = Get-Date
+				    $fromDate  = $today.AddDays(1).ToString('yyyy-MM-dd')  # future-only start
+				    $toDate    = $today.AddDays($HorizonDays).ToString('yyyy-MM-dd')
+				    $startDate = $today.ToString('yyyy-MM-dd')
+				
+				    # NOTE: Your original filter excludes rows active today. Keep that if you only want future rows.
+				    # If you need "current OR near future" in a single call, prefer asOfDate (see section 3).
+				    $filter =
+				        if ($UseEffectiveLatestChange) {
+				            "startDate gt datetime'$startDate`T23:59:59Z' and effectiveLatestChange eq true"
+				        } else {
+				            "startDate gt datetime'$startDate`T23:59:59Z'"
+				        }
+				
+				    #$select = "userId,startDate,endDate,seqNumber,jobCode,division,department,company,position,emplStatus,effectiveLatestChange"
+					$select = @(
+					    "seqNumber",
+					    "userId",
+					    "startDate",
+					    "businessUnit",
+					    "lastModifiedDateTime",
+					    "workscheduleCode",
+					    "effectiveLatestChange",
+					    "endDate",
+					    "contractType",
+					    "createdDateTime",
+					    "jobCode",
+					    "division",
+					    "timeTypeProfileCode",
+					    "holidayCalendarCode",
+					    "costCenter",
+					    "timeRecordingProfileCode",
+					    "eventReason",
+					    "position",
+					    "emplStatus",
+					    "countryOfCompany",
+					    "createdOn",
+					    "serviceCostLevel",
+					    "payGrade",
+					    "externalTimeRecordingGroupId",
+					    "company",
+					    "department",
+					    "event",
+					    "timeRecordingVariant",
+					    "employeeClass",
+					    "customString19",
+					    "employmentType",
+					    "lastModifiedBy",
+					    "customString5",
+					    "customString10",
+					    "customString4",
+					    "customString11",
+					    "customString3",
+					    "customString2",
+					    "managerId",
+					    "customString6",
+					    "lastModifiedOn",
+					    "customString1",
+					    "createdBy",
+					    "location"
+					) -join ","
+				    $orderby = "userId asc,startDate asc"
+				    $append = "?fromDate=$fromDate&toDate=$toDate&`$select=$select&`$orderby=$orderby&`$filter=$filter"
+				
+				    $result = Invoke-SFRestMethod -BaseUrl $global:_url -EndPoint "odata/v2/EmpJob" -Append $append
+				
+				    # Deduplicate: pick the most relevant per user across the whole result set
+				    $relevant = Select-RelevantEmpJobRow -EmpJobs $result -Today ($today.Date)
+				
+				    $global:_jobs = $relevant
+				    return $relevant
 				]]>
 			</CustomCommand>
 			<CustomCommand Name="Get-SFFutureJob">
@@ -582,10 +737,12 @@
 						[parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
 						[DateTime]$startDate
 					)
+					
+					# (seqNumber=1L,startDate=datetime'2026-02-04T00:00:00',userId='11140002')
 					[string]$DateFormatted = $startDate.ToString("yyyy-MM-ddT00:00:00")
                     #$Append = '(seqNumber=' + $seqNumber + 'L,startDate=datetime''' + $DateFormatted + ''',userId=''' + $userId + ''')'
 					#$result = Invoke-SFRestMethodSingle -BaseUrl $global:_url -EndPoint "odata/v2/EmpJob" -Append $Append
-					$job = $global:_jobs | Where-Object { $_.Userid -eq $userId -And $_.SeqNumber -eq $seqNumber } # -And $_.StartDate -eq $tartDate}
+					$job = $global:_jobs | Where-Object { $_.Userid -eq $userId -And $_.SeqNumber -eq $seqNumber -And $_.startDate -eq $StartDate  } # -And $_.StartDate -eq $tartDate}
 					#$job = $global:_jobs | Where-Object -Property "userId" -eq -Value $userId
 					return $job
 					#return $result
@@ -1523,11 +1680,39 @@
                         <Bind CommandResultOf="Get-SFPosition" Path="effectiveEndDate" />
 					</ReturnBindings>
 				</Property>
+				<!--changereason-->
+				<Property Name="changereason" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="changereason" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="changereason" />
+					</ReturnBindings>
+				</Property>
 				<!--costCenter-->
 				<Property Name="costCenter" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
 					<ReturnBindings>
 						<Bind CommandResultOf="Get-SFPositions" Path="costCenter" />
                         <Bind CommandResultOf="Get-SFPosition" Path="costCenter" />
+					</ReturnBindings>
+				</Property>
+				<!--createdDate-->
+				<Property Name="createdDateTime" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="createdDateTime" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="createdDateTime" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_Jobfunction-->
+				<Property Name="cust_Jobfunction" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="cust_Jobfunction" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="cust_Jobfunction" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_Farvekode-->
+				<Property Name="cust_Farvekode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFPositions" Path="cust_Farvekode" />
+                        <Bind CommandResultOf="Get-SFPosition" Path="cust_Farvekode" />
 					</ReturnBindings>
 				</Property>
 				<!--cust_StillingsniveauNav costCenter-->
@@ -1631,6 +1816,27 @@
 					<ReturnBindings>
 						<Bind CommandResultOf="Get-SFFuturePositions" Path="costCenter" />
                         <Bind CommandResultOf="Get-SFFuturePosition" Path="costCenter" />
+					</ReturnBindings>
+				</Property>
+				<!--createdDate-->
+				<Property Name="createdDateTime" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="createdDateTime" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="createdDateTime" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_Jobfunction-->
+				<Property Name="cust_Jobfunction" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="cust_Jobfunction" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="cust_Jobfunction" />
+					</ReturnBindings>
+				</Property>
+				<!--cust_Farvekode-->
+				<Property Name="cust_Farvekode" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFuturePositions" Path="cust_Farvekode" />
+                        <Bind CommandResultOf="Get-SFFuturePosition" Path="cust_Farvekode" />
 					</ReturnBindings>
 				</Property>
 				<!--cust_StillingsniveauNav-->
@@ -1953,6 +2159,36 @@
                         <Bind CommandResultOf="Get-SFJob" Path="managerId" />
 					</ReturnBindings>
 				</Property>
+				<!--costCenter-->
+				<Property Name="costCenter" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="costCenter" />
+                        <Bind CommandResultOf="Get-SFJob" Path="costCenter" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFJob" Parameter="costCenter" />
+					 </CommandMappings>
+				</Property>
+				<!--eventReason-->
+				<Property Name="eventReason" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="eventReason" />
+                        <Bind CommandResultOf="Get-SFJob" Path="eventReason" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFJob" Parameter="eventReason" />
+					 </CommandMappings>
+				</Property>
+				<!--createdDateTime-->
+				<Property Name="createdDateTime" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFJobs" Path="createdDateTime" />
+                        <Bind CommandResultOf="Get-SFJob" Path="createdDateTime" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFJob" Parameter="createdDateTime" />
+					 </CommandMappings>
+				</Property>
 			</Properties>
 			<ReadConfiguration>
 				<ListingCommand Command="Get-SFJobs">
@@ -2123,6 +2359,36 @@
 						<Bind CommandResultOf="Get-SFFutureJobs" Path="managerId" />
                         <Bind CommandResultOf="Get-SFFutureJob" Path="managerId" />
 					</ReturnBindings>
+				</Property>
+				<!--eventReason-->
+				<Property Name="eventReason" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="eventReason" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="eventReason" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFutureJob" Parameter="eventReason" />
+					 </CommandMappings>
+				</Property>
+				<!--costCenter-->
+				<Property Name="costCenter" DataType="String" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="costCenter" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="costCenter" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFutureJob" Parameter="costCenter" />
+					 </CommandMappings>
+				</Property>
+				<!--createdDateTime-->
+				<Property Name="createdDateTime" DataType="DateTime" IsUniqueKey="false" IsMandatory="false" IsAutoFill="false" AccessConstraint="ReadOnly">
+					<ReturnBindings>
+						<Bind CommandResultOf="Get-SFFutureJobs" Path="createdDateTime" />
+                        <Bind CommandResultOf="Get-SFFutureJob" Path="createdDateTime" />
+					</ReturnBindings>
+					<CommandMappings>
+						<Map ToCommand="Get-SFFutureJob" Parameter="createdDateTime" />
+					 </CommandMappings>
 				</Property>
 			</Properties>
 			<ReadConfiguration>
